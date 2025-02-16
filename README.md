@@ -11,7 +11,7 @@ To use Rustgpt Autocode, you need to have Rust and Cargo installed on your syste
 Clone the repository and navigate to the project directory:
 
 ```sh
-git clone https://github.com/yourusername/rustgpt-autocode.git
+git clone https://github.com/JesusGautamah/rustgpt-autocode.git
 cd rustgpt-autocode
 ```
 
