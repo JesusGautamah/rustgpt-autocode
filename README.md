@@ -50,7 +50,7 @@ cargo run -- user/repo src/main.rs "Add a new function to calculate the factoria
 
 ## Contribution
 
-Contributions are welcome! If you have any ideas, suggestions, or bug reports, please open an issue or submit a pull request on the [GitHub repository](https://github.com/yourusername/rustgpt-autocode).
+Contributions are welcome! If you have any ideas, suggestions, or bug reports, please open an issue or submit a pull request on the [GitHub repository](https://github.com/JesusGautamah/rustgpt-autocode).
 
 ## License
 
