@@ -17,9 +17,6 @@ use base64::Engine;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenv().ok();
-    let openai_api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set");
-    let github_token = env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN must be set");
-
     let matches = Command::new("Rustgpt Autocode")
         .version("0.6.0")
         .author("Jesus Gautamah <lima.jesuscc@gmail.com>")
@@ -29,6 +26,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .arg(Arg::new("modification").help("Modification text").required(true).index(3))
         .arg(Arg::new("branch").short('b').long("branch").help("Branch name").default_value("main"))
         .arg(Arg::new("format").short('f').long("format").help("Output format").default_value("text"))
+        .arg(Arg::new("git").long("git").help("GitHub token"))
+        .arg(Arg::new("openai").long("openai").help("OpenAI API key"))
         .get_matches();
 
     let repo_name = matches.get_one::<String>("repo").unwrap();
@@ -36,6 +35,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let modification_text = matches.get_one::<String>("modification").unwrap();
     let branch = matches.get_one::<String>("branch").unwrap();
     let format = matches.get_one::<String>("format").unwrap();
+
+    let github_token = matches.get_one::<String>("git").map_or_else(
+        || env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN must be set"),
+        |v| v.clone(),
+    );
+    let openai_api_key = matches.get_one::<String>("openai").map_or_else(
+        || env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set"),
+        |v| v.clone(),
+    );
 
     let octocrab = Octocrab::builder().personal_token(github_token).build()?;
     let repo_name_parts: Vec<&str> = repo_name.split('/').collect();
