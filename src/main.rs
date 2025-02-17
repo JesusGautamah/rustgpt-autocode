@@ -1,7 +1,6 @@
 use langchain_rust::{
     chain::{Chain, LLMChainBuilder},
     fmt_message, fmt_placeholder, fmt_template,
-    language_models::llm::LLM,
     llm::openai::{OpenAI, OpenAIModel, OpenAIConfig},
     message_formatter,
     prompt::HumanMessagePromptTemplate,
@@ -9,58 +8,82 @@ use langchain_rust::{
     schemas::messages::Message,
     template_fstring,
 };
-use dotenv::dotenv; 
-use std::{env, fs, error::Error};
-use git2::Repository;
+use dotenv::dotenv;
+use std::{env, error::Error};
+use octocrab::Octocrab;
+use clap::{Command, Arg};
+use base64::Engine;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
     dotenv().ok();
     let openai_api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set");
-    let mut args = env::args().skip(1);
-    let repo_name = args.next().expect("Please provide a repository name (e.g., user/repo)");
-    let repo_url = format!("https://github.com/{}.git", repo_name);
-    let file_path = args.next().expect("Please provide a file path");
-    let modification_text = args.next().expect("Please provide a modification text");
-    
+    let github_token = env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN must be set");
 
-    let mut branch_name: Option<String> = None;
-    while let Some(arg) = args.next() {
-        if arg == "--branch" {
-            branch_name = args.next();
-        } else if arg == "-b" {
-            branch_name = args.next();
+    let matches = Command::new("Rustgpt Autocode")
+        .version("0.3.0")
+        .author("Jesus Gautamah <lima.jesuscc@gmail.com>")
+        .about("Modifies code in a GitHub repository using OpenAI")
+        .arg(Arg::new("repo")
+            .help("Repository name (e.g., user/repo)")
+            .required(true)
+            .index(1))
+        .arg(Arg::new("file")
+            .help("File path in the repository")
+            .required(true)
+            .index(2))
+        .arg(Arg::new("modification")
+            .help("Modification text")
+            .required(true)
+            .index(3))
+        .arg(Arg::new("branch")
+            .short('b')
+            .long("branch")
+            .help("Branch name")
+            .action(clap::ArgAction::Set)
+            .default_value("main"))
+        .get_matches();
+
+    let repo_name = matches.get_one::<String>("repo").unwrap();
+    let file_path = matches.get_one::<String>("file").unwrap();
+    let modification_text = matches.get_one::<String>("modification").unwrap();
+    let branch = matches.get_one::<String>("branch").unwrap();
+
+    let octocrab = Octocrab::builder()
+        .personal_token(github_token)
+        .build()
+        .expect("Could not create Octocrab instance");
+
+    let repo_name_parts: Vec<&str> = repo_name.split('/').collect();
+    let file_content = octocrab.repos(repo_name_parts[0], repo_name_parts[1])
+        .get_content()
+        .path(&*file_path)
+        .r#ref(branch)
+        .send()
+        .await?
+        .items
+        .into_iter()
+        .next()
+        .expect("File not found")
+        .content;
+
+    let file_content = file_content.expect("File content is None");
+
+    // Remove new line characters from the base64 content
+    let file_content = file_content.replace("\n", "");
+
+    // Check if the content is properly base64 encoded
+    let decoded_content = match base64::engine::general_purpose::STANDARD.decode(&file_content) {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Failed to decode base64 content: {:?}", e);
+            eprintln!("Content: {:?}", file_content);
+            return Err(Box::new(e) as Box<dyn Error>);
         }
-    }
+    };
 
-    let local_repo_path = format!("tmp/{}", repo_name);
-    println!("Cloning repository at URL: {}", repo_url);
-    println!("Local repository path: {}", local_repo_path);
-    let repo = Repository::clone(&repo_url, &local_repo_path)
-        .unwrap_or_else(|_| panic!("Could not clone repository at URL: {}", repo_url));
-
-
-    if let Some(ref branch) = branch_name {
-        let branch_ref = format!("refs/heads/{}", branch);
-        match repo.find_reference(&branch_ref) {
-            Ok(_) => {
-                repo.set_head(&branch_ref)?;
-            }
-            Err(_) => {
-                let head = repo.head()?;
-                let head_commit = head.peel_to_commit()?;
-                repo.branch(&branch, &head_commit, false)?;
-                repo.set_head(&branch_ref)?;
-            }
-        }
-        repo.checkout_head(None)?;
-    }
-
-    let full_file_path = format!("{}/{}", local_repo_path, file_path);
-
-    let original_content = fs::read_to_string(&full_file_path)
-        .unwrap_or_else(|_| panic!("Could not read file at path: {}", full_file_path));
+    let original_content = String::from_utf8(decoded_content).map_err(|e| Box::new(e) as Box<dyn Error>)?;
 
     let open_ai = OpenAI::default()
                  .with_config(OpenAIConfig::default()
@@ -98,11 +121,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     {
         Ok(result) => {
             println!("Result: {:?}", result);
-            // remove the cloned repository
-            fs::remove_dir_all(&local_repo_path)
-                .unwrap_or_else(|_| panic!("Could not remove directory at path: {}", local_repo_path));
         }
-        Err(e) => panic!("Error invoking LLMChain: {:?}", e),
+        Err(e) => panic!("Error invoking LLMChain: {:?}", Box::new(e) as Box<dyn Error>),
     }
 
     Ok(())
