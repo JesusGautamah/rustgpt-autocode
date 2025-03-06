@@ -56,10 +56,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .items
         .into_iter()
         .next()
-        .expect("File not found")
+        .ok_or("File not found")?
         .content;
 
-    let file_content = file_content.expect("File content is None").replace("\n", "");
+    let file_content = file_content.ok_or("File content is None")?.replace("\n", "");
     let decoded_content = base64::engine::general_purpose::STANDARD.decode(&file_content)?;
     let original_content = String::from_utf8(decoded_content)?;
 
@@ -70,8 +70,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let prompt = message_formatter![
         fmt_message!(Message::new_system_message(
             "You are an AI assistant specialized in modifying code based on user instructions.\n \
-            Do not send additional comments.\n \
-            Always return the modified code in parts, using the format:\n \
+            Do not send additional comments and do not use block of code.\n \
+            Always return the modified code in parts and aways return the complete code, not only the alteration, using the format:\n \
             \"\"\"CODE_START\"\"\"\n\
             <your code>\n\
             \"\"\"CODE_CONTINUE\"\"\" (if there are more parts) or \"\"\"CODE_END\"\"\" (if it's the last part)."
@@ -83,6 +83,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     ];
 
     let chain = LLMChainBuilder::new().prompt(prompt).llm(open_ai.clone()).build().unwrap();
+    let modification_text = if format == "base64" {
+        let decoded_modification_text = base64::engine::general_purpose::STANDARD.decode(modification_text.replace("\n", "").as_bytes())?;
+        String::from_utf8(decoded_modification_text)?
+    } else {
+        modification_text.to_string()
+    };
+
     let mut modified_content = String::new();
     let mut history = vec![
         Message::new_human_message(modification_text.clone()),
@@ -96,9 +103,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "history" => history.clone(),
         }).await {
             Ok(result) => {
-                if result.contains("CODE_START") {
+                if result.contains("CODE_START") || result.contains("CODE_CONTINUE") || result.contains("CODE_END") {
                     modified_content.push_str(&result);
-                    history.push(Message::new_ai_message(result.clone()));
+                    history.push(Message::new_ai_message(result.clone()));  
 
                     if result.contains("CODE_END") {
                         break;
@@ -107,17 +114,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 } else {
                     eprintln!("Unexpected response format, stopping.");
-                    break;
+                    eprintln!("Response: {:?}", result);
+                    return Err("Unexpected response format".into());
                 }
             }
             Err(e) => {
                 eprintln!("Error processing chunk: {:?}", e);
-                break;
+                return Err(e.into());
             }
         }
     }
 
-    let final_content = modified_content.replace("\"\"\"CODE_START\"\"\"", "").replace("\"\"\"CODE_END\"\"\"", "");
+    let final_content = modified_content
+        .replace("\"\"\"CODE_START\"\"\"", "")
+        .replace("\"\"\"CODE_CONTINUE\"\"\"", "")
+        .replace("\"\"\"CODE_END\"\"\"", "");
 
     if format == "base64" {
         let base64_content = base64::engine::general_purpose::STANDARD.encode(final_content.as_bytes());
